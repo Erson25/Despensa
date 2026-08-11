@@ -84,6 +84,27 @@ body{
 .subtotal{margin-left:auto;font-family:var(--dato);font-size:13.5px;font-weight:700;color:var(--panela)}
 .agotado-tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(36,26,16,.5);margin-top:10px;display:block}
 
+/* ---------- Modo de entrega ---------- */
+.modos{display:grid;gap:10px;margin-top:16px}
+@media(min-width:640px){.modos{grid-template-columns:1fr 1fr}}
+.modo{
+  background:var(--papel);border:2px solid var(--linea);border-radius:10px;padding:14px;
+  cursor:pointer;display:block;position:relative
+}
+.modo input{position:absolute;opacity:0;pointer-events:none}
+.modo:has(input:checked){border-color:var(--hoja);box-shadow:0 0 0 2px rgba(23,73,44,.15)}
+.modo .cab{display:flex;align-items:center;gap:9px}
+.modo .bolita{
+  width:19px;height:19px;flex:none;border:2px solid var(--linea);border-radius:50%;
+  display:grid;place-items:center
+}
+.modo:has(input:checked) .bolita{border-color:var(--hoja)}
+.modo:has(input:checked) .bolita::after{content:"";width:9px;height:9px;border-radius:50%;background:var(--hoja)}
+.modo .tit{font-weight:700;font-size:15.5px}
+.modo .costo{margin-left:auto;font-family:var(--dato);font-size:13px;font-weight:700;color:var(--panela)}
+.modo .costo.gratis{color:var(--hoja-claro)}
+.modo .det{font-size:13px;color:rgba(36,26,16,.62);margin-top:7px;padding-left:28px;line-height:1.4}
+
 /* ---------- Formulario ---------- */
 .form{background:var(--papel);border:1px solid var(--linea);border-radius:10px;padding:16px;margin-top:14px;display:grid;gap:14px}
 @media(min-width:700px){.form{grid-template-columns:1fr 1fr;align-items:start}.ancho{grid-column:1/-1}}
@@ -195,8 +216,26 @@ body{
   </section>
 
   <section class="seccion">
+    <h2 class="rotulo">Cómo lo recibes</h2>
+    <div class="modos">
+      <label class="modo">
+        <input type="radio" name="modo" value="recoger" id="m-recoger" checked>
+        <span class="cab"><span class="bolita"></span><span class="tit">Paso a recogerlo</span>
+        <span class="costo gratis">sin costo</span></span>
+        <span class="det" id="det-recoger">—</span>
+      </label>
+      <label class="modo">
+        <input type="radio" name="modo" value="domicilio" id="m-domicilio">
+        <span class="cab"><span class="bolita"></span><span class="tit">Me lo llevan a casa</span>
+        <span class="costo" id="costo-dom">desde $5.000</span></span>
+        <span class="det">Floridablanca $5.000 · Bucaramanga, Girón y Piedecuesta $10.000</span>
+      </label>
+    </div>
+  </section>
+
+  <section class="seccion" id="bloque-datos">
     <h2 class="rotulo">Tus datos</h2>
-    <p class="nota">Necesito tu dirección completa para llevártelo. Entre más exacta, menos vueltas doy y más rápido te llega.</p>
+    <p class="nota" id="aviso-entrega">—</p>
     <div class="form">
       <div class="campo"><label for="nombre">Nombre y apellido</label><input id="nombre" name="nombre" type="text" autocomplete="name" placeholder="Ingrid Rodríguez"></div>
       <div class="campo"><label for="tel">WhatsApp</label><input id="tel" name="tel" type="tel" inputmode="numeric" autocomplete="tel" placeholder="300 000 0000"></div>
@@ -252,9 +291,13 @@ body{
    se administran desde la hoja de Google, no desde este archivo.
    ============================================================ */
 
-const ENDPOINT = "https://script.google.com/macros/s/AKfycbzU5KGNUtJufsAX-vmEk6Lj27z5IEaP5VTgIzQmqeiLBLsTBYUe7gvRN8hTrqkBtEFvFQ/exec";
+const ENDPOINT = "";                     // URL del Apps Script, termina en /exec
 const MINIMO_LOCAL = 15000;              // pedido mínimo en pesos. Pon 0 para quitarlo.
-const DOMICILIO    = 0;                  // costo del domicilio. Deja 0 si va incluido en el precio.
+// Punto donde el cliente puede recoger sin costo.
+const PUNTO_RECOGIDA = "Cll 201b #19-15, La Paz — Floridablanca";
+
+// Costo del domicilio por municipio. El resto usa "otros".
+const TARIFAS = { "Floridablanca": 5000, "otros": 10000 };
 
 /* Respaldo: se usa solo si la hoja no responde, para que la vitrina
    nunca aparezca vacía frente a un cliente. */
@@ -284,6 +327,13 @@ const RESPALDO = {
 
 let PRODUCTOS = RESPALDO.productos;
 let MINIMO    = RESPALDO.minimo;
+
+const esDomicilio = () => document.getElementById("m-domicilio").checked;
+function tarifa(){
+  if (!esDomicilio()) return 0;
+  const m = document.getElementById("municipio").value;
+  return TARIFAS[m] !== undefined ? TARIFAS[m] : TARIFAS.otros;
+}
 
 const pesos  = n => "$" + Math.round(n).toLocaleString("es-CO");
 const kilos  = n => n.toLocaleString("es-CO",{minimumFractionDigits:1,maximumFractionDigits:1}) + " kg";
@@ -338,6 +388,7 @@ async function cargar(){
   }
   pintar();
   llenarSelects();
+  pintarModo();
   totalizar();
 }
 
@@ -415,8 +466,9 @@ function totales(){
 function totalizar(){
   const {kg, plata} = totales();
   document.getElementById("kg-total").textContent = kilos(kg);
+  const env = plata > 0 ? tarifa() : 0;
   document.getElementById("plata-total").textContent =
-    pesos(plata + (plata > 0 ? DOMICILIO : 0)) + (DOMICILIO > 0 && plata > 0 ? "  (incluye domicilio)" : "");
+    pesos(plata + env) + (env > 0 ? "  (incluye domicilio " + pesos(env) + ")" : "");
   const corto = MINIMO > 0 && plata > 0 && plata < MINIMO;
   const falta = corto ? MINIMO - plata : 0;
   document.getElementById("alerta").textContent =
@@ -441,6 +493,29 @@ function llenarSelects(){
 }
 
 /* --- Enviar --- */
+/* --- Recoger o domicilio --- */
+const CAMPOS_DOM = ["municipio","barrio","direccion","referencia"];
+
+function pintarModo(){
+  const dom = esDomicilio();
+  CAMPOS_DOM.forEach(id => {
+    const c = document.getElementById(id).closest(".campo");
+    c.style.display = dom ? "" : "none";
+    c.classList.remove("malo");
+  });
+  document.getElementById("aviso-entrega").textContent = dom
+    ? "Necesito tu dirección completa para llevártelo. Entre más exacta, menos vueltas doy."
+    : "Recoges en " + PUNTO_RECOGIDA + ". Te escribo cuando llegue del campo.";
+  const c = document.getElementById("costo-dom");
+  const m = document.getElementById("municipio").value;
+  const t = TARIFAS[m] !== undefined ? TARIFAS[m] : TARIFAS.otros;
+  c.textContent = dom ? pesos(t) : "desde " + pesos(Math.min.apply(null, Object.values(TARIFAS)));
+  document.getElementById("det-recoger").textContent = PUNTO_RECOGIDA;
+  totalizar();
+}
+document.querySelectorAll("input[name=modo]").forEach(r => r.addEventListener("change", pintarModo));
+document.getElementById("municipio").addEventListener("change", pintarModo);
+
 document.getElementById("enviar").addEventListener("click", enviar);
 
 function enviar(){
@@ -455,9 +530,11 @@ function enviar(){
   const fallas = [], marcar = id => document.getElementById(id).closest(".campo").classList.add("malo");
   if (nombre.length < 3)    { fallas.push("Escribe tu nombre."); marcar("nombre"); }
   if (tel.length < 10)      { fallas.push("El WhatsApp debe tener 10 dígitos."); marcar("tel"); }
-  if (barrio.length < 3)    { fallas.push("Falta el barrio."); marcar("barrio"); }
-  if (direccion.length < 6)  { fallas.push("La dirección quedó incompleta."); marcar("direccion"); }
-  if (referencia.length < 3) { fallas.push("Falta el punto de referencia."); marcar("referencia"); }
+  if (esDomicilio()){
+    if (barrio.length < 3)     { fallas.push("Falta el barrio."); marcar("barrio"); }
+    if (direccion.length < 6)  { fallas.push("La dirección quedó incompleta."); marcar("direccion"); }
+    if (referencia.length < 3) { fallas.push("Falta el punto de referencia."); marcar("referencia"); }
+  }
   if (fallas.length){
     zona.innerHTML = `<p class="error">${fallas.join(" ")}</p>`;
     document.querySelector(".campo.malo input").focus();
@@ -473,10 +550,14 @@ function enviar(){
     fecha: new Date().toISOString(),
     jornada: F.sab.toISOString().slice(0,10),
     nombre, telefono: tel,
-    municipio: v("municipio"), barrio, direccion, referencia,
+    modo: esDomicilio() ? "Domicilio" : "Recoge en el punto",
+    municipio: esDomicilio() ? v("municipio") : "Floridablanca",
+    barrio:    esDomicilio() ? barrio    : "La Paz",
+    direccion: esDomicilio() ? direccion : PUNTO_RECOGIDA,
+    referencia: esDomicilio() ? referencia : "",
     franja: v("franja"),
     notas: v("notas"),
-    kg_total: kg, domicilio: DOMICILIO, total: plata + DOMICILIO,
+    kg_total: kg, domicilio: tarifa(), total: plata + tarifa(),
     detalle: lineas.map(l => l.producto + ":" + l.kg).join(" | "),
     items: JSON.stringify(lineas)
   };
@@ -532,12 +613,16 @@ function cerrarVelo(){ document.getElementById("velo").classList.remove("ver"); 
 
 function confirmar(pedido, lineas){
   document.getElementById("listo-texto").textContent =
-    pedido.nombre.split(" ")[0] + ", quedó anotado para el " + SABADO_TXT + ". Te confirmo por WhatsApp el jueves en la noche cuando cierre el pedido, y te escribo antes de salir para tu casa.";
+    pedido.nombre.split(" ")[0] + ", quedó anotado para el " + SABADO_TXT + ". Te confirmo por WhatsApp el jueves en la noche cuando cierre el pedido, " + (pedido.domicilio > 0 ? "y te escribo antes de salir para tu casa." : "y te aviso apenas esté listo para que pases.");
+  const dom = pedido.domicilio > 0;
   document.getElementById("listo-resumen").textContent =
     lineas.map(l => l.kg + " kg · " + l.producto).join("\n")
+    + (dom ? "\nDomicilio · " + pesos(pedido.domicilio) : "")
     + "\n────────────\nTotal " + pesos(pedido.total)
-    + "\n\nEntrega en:\n" + pedido.municipio + " — " + pedido.barrio
-    + "\n" + pedido.direccion + "\n" + pedido.franja;
+    + (dom
+        ? "\n\nTe lo llevo a:\n" + pedido.municipio + " — " + pedido.barrio + "\n" + pedido.direccion
+        : "\n\nRecoges en:\n" + PUNTO_RECOGIDA)
+    + "\n" + pedido.franja;
   document.getElementById("listo").classList.add("ver");
   document.getElementById("listo").scrollIntoView({behavior:"smooth", block:"center"});
 
