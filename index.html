@@ -176,7 +176,7 @@ body{
       <div class="campo"><label for="municipio">Municipio</label><select id="municipio"></select></div>
       <div class="campo"><label for="barrio">Barrio o conjunto</label><input id="barrio" type="text" placeholder="Cañaveral, Porto Vento, La Cumbre…"></div>
       <div class="campo ancho"><label for="direccion">Dirección exacta</label><input id="direccion" type="text" autocomplete="street-address" placeholder="Calle 30 #12-45, torre 5 apto 504"><span class="pista">Incluye torre, apartamento o interior si aplica.</span></div>
-      <div class="campo"><label for="referencia">Punto de referencia</label><input id="referencia" type="text" placeholder="Portería azul, frente al parque"><span class="pista">Opcional, pero evita llamadas.</span></div>
+      <div class="campo"><label for="referencia">Punto de referencia</label><input id="referencia" type="text" placeholder="Portería azul, frente al parque"><span class="pista">Me evita llamarte para ubicarme.</span></div>
       <div class="campo"><label for="franja">Franja de entrega</label><select id="franja"></select></div>
       <div class="campo alto ancho"><label for="notas">Algo que deba saber</label><textarea id="notas" placeholder="Ej: el plátano bien verde, o llego después de las 5"></textarea><span class="pista">Opcional. Ej: llamar al llegar, no timbrar.</span></div>
       <div class="ancho" id="zona-error"></div>
@@ -210,7 +210,7 @@ body{
    se administran desde la hoja de Google, no desde este archivo.
    ============================================================ */
 
-const ENDPOINT = "https://script.google.com/macros/s/AKfycbzU5KGNUtJufsAX-vmEk6Lj27z5IEaP5VTgIzQmqeiLBLsTBYUe7gvRN8hTrqkBtEFvFQ/exec";
+const ENDPOINT = "";                     // URL del Apps Script, termina en /exec
 const MINIMO_LOCAL = 15000;              // pedido mínimo en pesos. Pon 0 para quitarlo.
 const DOMICILIO    = 0;                  // costo del domicilio. Deja 0 si va incluido en el precio.
 const WHATSAPP  = "573118696916";         // tu número, solo dígitos. Plan B si falla el envío.
@@ -406,7 +406,7 @@ function enviar(){
   const v = id => document.getElementById(id).value.trim();
   const nombre = v("nombre");
   const tel    = document.getElementById("tel").value.replace(/\D/g,"");
-  const barrio = v("barrio"), direccion = v("direccion");
+  const barrio = v("barrio"), direccion = v("direccion"), referencia = v("referencia");
   const zona   = document.getElementById("zona-error");
   zona.innerHTML = "";
   document.querySelectorAll(".campo").forEach(c => c.classList.remove("malo"));
@@ -415,7 +415,8 @@ function enviar(){
   if (nombre.length < 3)    { fallas.push("Escribe tu nombre."); marcar("nombre"); }
   if (tel.length < 10)      { fallas.push("El WhatsApp debe tener 10 dígitos."); marcar("tel"); }
   if (barrio.length < 3)    { fallas.push("Falta el barrio."); marcar("barrio"); }
-  if (direccion.length < 6) { fallas.push("La dirección quedó incompleta."); marcar("direccion"); }
+  if (direccion.length < 6)  { fallas.push("La dirección quedó incompleta."); marcar("direccion"); }
+  if (referencia.length < 3) { fallas.push("Falta el punto de referencia."); marcar("referencia"); }
   if (fallas.length){
     zona.innerHTML = `<p class="error">${fallas.join(" ")}</p>`;
     document.querySelector(".campo.malo input").focus();
@@ -431,7 +432,7 @@ function enviar(){
     fecha: new Date().toISOString(),
     jornada: F.sab.toISOString().slice(0,10),
     nombre, telefono: tel,
-    municipio: v("municipio"), barrio, direccion, referencia: v("referencia"),
+    municipio: v("municipio"), barrio, direccion, referencia,
     franja: v("franja"),
     notas: v("notas"),
     kg_total: kg, domicilio: DOMICILIO, total: plata + DOMICILIO,
@@ -444,11 +445,14 @@ function enviar(){
 
   if (!ENDPOINT){ planB(pedido, lineas); return; }
 
-  fetch(ENDPOINT, {method:"POST", body:new URLSearchParams(pedido)})
-    .then(r => { if(!r.ok) throw new Error(); confirmar(pedido, lineas); })
+  // Apps Script no devuelve cabeceras CORS, así que la respuesta llega "opaca":
+  // el pedido se guarda bien pero el navegador no puede leer el resultado.
+  // Por eso se envía en modo no-cors y se confirma al terminar.
+  fetch(ENDPOINT, {method:"POST", mode:"no-cors", body:new URLSearchParams(pedido)})
+    .then(() => confirmar(pedido, lineas))
     .catch(() => {
-      btn.disabled = false; btn.textContent = "Enviar pedido";
-      zona.innerHTML = `<p class="error">No se pudo enviar. Revisa tu conexión y vuelve a intentar, o escríbeme por WhatsApp.</p>`;
+      zona.innerHTML = `<p class="error">Se cayó la conexión. Te paso a WhatsApp para no perder el pedido.</p>`;
+      planB(pedido, lineas);
     });
 }
 
@@ -479,8 +483,21 @@ function confirmar(pedido, lineas){
     + "\n" + pedido.direccion + "\n" + pedido.franja;
   document.getElementById("listo").classList.add("ver");
   document.getElementById("listo").scrollIntoView({behavior:"smooth", block:"center"});
+
+  // Deja todo limpio para el siguiente pedido
+  PRODUCTOS.forEach((p,i) => {
+    const q = document.getElementById("q-" + i);
+    if (q){ q.value = 0; carrito[i] = 0;
+      document.getElementById("s-" + i).textContent = "";
+      document.getElementById("item-" + i).classList.remove("activo"); }
+  });
+  ["nombre","tel","barrio","direccion","referencia","notas"].forEach(id => document.getElementById(id).value = "");
+  document.querySelectorAll(".campo").forEach(c => c.classList.remove("malo"));
+  totalizar();
+
   const btn = document.getElementById("enviar");
   btn.textContent = "Pedido enviado"; btn.disabled = true;
+  setTimeout(() => { totalizar(); }, 4000);
 }
 
 cargar();
