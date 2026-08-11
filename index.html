@@ -1,415 +1,317 @@
-<!DOCTYPE html>
-<html lang="es-CO">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Despensa del Campo — Pedidos de la semana</title>
-<meta name="description" content="Plátano, yuca y fruta traída directo de finca. Pide antes del jueves y recoge el fin de semana.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Karla:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --tierra:#241A10;
-  --fique:#E5D7B8;
-  --papel:#FAF5E9;
-  --hoja:#17492C;
-  --hoja-claro:#2C6E45;
-  --panela:#B0670F;
-  --linea:rgba(36,26,16,.14);
-  --lcd:#7FE3A1;
-  --display:"Archivo Black","Arial Black",system-ui,sans-serif;
-  --texto:"Karla","Segoe UI",system-ui,sans-serif;
-  --dato:"Roboto Mono",ui-monospace,"Courier New",monospace;
-  --barra:96px;
+/**
+ * DESPENSA DEL CAMPO — receptor de pedidos + catálogo
+ *
+ * Esta hoja de cálculo es el back de la vitrina. Hace tres cosas:
+ *   1. Guarda los pedidos que llegan (hojas "Pedidos" y "Lineas").
+ *   2. Consolida los kilos por producto para la compra (hoja "Consolidado").
+ *   3. Le entrega a la vitrina el catálogo y la configuración (hojas "Catalogo" y "Config").
+ *
+ * PRIMER PASO, UNA SOLA VEZ:
+ *   Menú Despensa → "Crear hojas base". Eso arma Catalogo y Config con ejemplos.
+ */
+
+var HOJA_PEDIDOS     = 'Pedidos';
+var HOJA_LINEAS      = 'Lineas';
+var HOJA_CONSOLIDADO = 'Consolidado';
+var HOJA_CATALOGO    = 'Catalogo';
+var HOJA_CONFIG      = 'Config';
+
+var ENC_PEDIDOS = ['Marca temporal', 'Jornada', 'Cliente', 'WhatsApp', 'Punto de recogida',
+                   'Franja', 'Kg totales', 'Total $', 'Detalle del pedido', 'Notas', 'Estado', 'Pagado'];
+var ENC_LINEAS  = ['Marca temporal', 'Jornada', 'Cliente', 'Producto', 'Kg', 'Precio $/kg', 'Subtotal $'];
+var ENC_CATALOGO = ['Orden', 'Producto', 'Precio venta $/kg', 'Precio de referencia $/kg',
+                    'Mostrar ahorro', 'Paso (kg)', 'Descripción corta', 'Archivo de foto', 'Disponible'];
+
+/* ================================================================
+   1. LO QUE LA VITRINA PIDE (catálogo y configuración)
+   ================================================================ */
+
+function doGet(e) {
+  var accion = (e && e.parameter && e.parameter.accion) || 'catalogo';
+  if (accion !== 'catalogo') return json({ ok: true, mensaje: 'Receptor activo' });
+
+  try {
+    return json({ ok: true, productos: leerCatalogo(), config: leerConfig() });
+  } catch (err) {
+    return json({ ok: false, error: String(err) });
+  }
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%}
-body{
-  font-family:var(--texto);
-  background:var(--fique);
-  color:var(--tierra);
-  line-height:1.5;
-  padding-bottom:calc(var(--barra) + env(safe-area-inset-bottom));
+
+function leerCatalogo() {
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJA_CATALOGO);
+  if (!hoja || hoja.getLastRow() < 2) return [];
+
+  var filas = hoja.getRange(2, 1, hoja.getLastRow() - 1, ENC_CATALOGO.length).getValues();
+  var lista = [];
+
+  filas.forEach(function (f) {
+    var nombre = String(f[1]).trim();
+    if (!nombre) return;                                  // fila vacía: se ignora
+    var precio = Number(f[2]) || 0;
+    if (precio <= 0) return;                              // sin precio no se publica
+
+    lista.push({
+      orden:   Number(f[0]) || 999,
+      nombre:  nombre,
+      precio:  precio,
+      plaza:   Number(f[3]) || 0,
+      ahorro:  normalizar(f[4]) || 'auto',                // 'si' | 'no' | 'auto'
+      paso:    Number(f[5]) || 1,
+      nota:    String(f[6] || '').trim(),
+      foto:    String(f[7] || '').trim(),
+      hay:     normalizar(f[8]) !== 'no'
+    });
+  });
+
+  lista.sort(function (a, b) { return a.orden - b.orden; });
+  return lista;
 }
-.wrap{max-width:960px;margin:0 auto;padding:0 16px}
-:focus-visible{outline:3px solid var(--panela);outline-offset:2px}
 
-/* ---------- Encabezado ---------- */
-.top{background:var(--hoja);color:var(--fique);padding:22px 0 20px}
-.marca{font-family:var(--display);font-size:clamp(28px,7.5vw,46px);line-height:.95;letter-spacing:-.02em;text-transform:uppercase}
-.marca span{display:block;color:var(--lcd)}
-.bajada{margin-top:10px;font-size:14.5px;max-width:44ch;color:rgba(229,215,184,.82)}
-.avisos{margin-top:18px;display:grid;gap:8px;grid-template-columns:1fr}
-@media(min-width:620px){.avisos{grid-template-columns:1fr 1fr 1fr}}
-.aviso{background:rgba(0,0,0,.22);border-left:3px solid var(--lcd);padding:9px 11px;border-radius:0 5px 5px 0}
-.aviso dt{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:rgba(229,215,184,.62);font-weight:700}
-.aviso dd{font-size:14.5px;font-weight:700;margin-top:2px}
-.cuenta{font-family:var(--dato);color:var(--lcd);font-size:12.5px;font-weight:500}
+function leerConfig() {
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJA_CONFIG);
+  var cfg = { puntos: [], franjas: [], minimo: 0, titular: '', mensaje: '' };
+  if (!hoja || hoja.getLastRow() < 2) return cfg;
 
-/* ---------- Catálogo ---------- */
-.seccion{padding:26px 0 6px}
-.rotulo{font-family:var(--display);text-transform:uppercase;font-size:13px;letter-spacing:.14em;color:var(--hoja)}
-.rotulo::after{content:"";display:block;height:2px;background:var(--hoja);margin-top:7px;opacity:.25}
-.nota{font-size:13.5px;color:rgba(36,26,16,.68);margin-top:10px;max-width:60ch}
-
-.rejilla{list-style:none;display:grid;gap:12px;margin-top:16px}
-@media(min-width:700px){.rejilla{grid-template-columns:1fr 1fr}}
-
-.item{background:var(--papel);border:1px solid var(--linea);border-radius:10px;padding:12px;display:grid;grid-template-columns:78px 1fr;gap:12px;align-items:start}
-.item.activo{border-color:var(--hoja);box-shadow:0 0 0 2px rgba(23,73,44,.16)}
-.item.agotado{opacity:.5}
-
-.foto{width:78px;height:78px;border-radius:7px;overflow:hidden;background:var(--hoja-claro);position:relative;display:grid;place-items:center}
-.foto img{width:100%;height:100%;object-fit:cover;display:block}
-.inicial{font-family:var(--display);font-size:30px;color:rgba(250,245,233,.9)}
-.foto::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(0,0,0,.10) 0 3px,transparent 3px 7px)}
-.foto.con-foto::after{display:none}
-
-.nombre{font-weight:700;font-size:16px;line-height:1.2}
-.detalle{font-size:12.5px;color:rgba(36,26,16,.62);margin-top:2px}
-.precios{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:7px}
-.precio{font-family:var(--dato);font-weight:700;font-size:17px;color:var(--hoja)}
-.unidad{font-family:var(--texto);font-size:11.5px;font-weight:400;color:rgba(36,26,16,.55)}
-.plaza{font-family:var(--dato);font-size:12px;color:rgba(36,26,16,.42);text-decoration:line-through}
-.ahorro{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;background:var(--panela);color:#fff;padding:2px 6px;border-radius:3px}
-
-.stepper{display:flex;align-items:center;gap:6px;margin-top:10px}
-.stepper button{width:34px;height:34px;flex:none;border:1px solid var(--linea);background:var(--fique);border-radius:7px;font-size:19px;font-weight:700;color:var(--tierra);cursor:pointer;line-height:1;font-family:var(--texto)}
-.stepper button:hover:not(:disabled){background:var(--hoja);color:var(--papel);border-color:var(--hoja)}
-.stepper button:disabled{opacity:.3;cursor:not-allowed}
-.stepper input{width:60px;height:34px;text-align:center;font-family:var(--dato);font-weight:700;font-size:15px;border:1px solid var(--linea);border-radius:7px;background:#fff;color:var(--tierra)}
-.stepper .med{font-size:12px;color:rgba(36,26,16,.55);flex:none}
-.subtotal{margin-left:auto;font-family:var(--dato);font-size:13.5px;font-weight:700;color:var(--panela)}
-.agotado-tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(36,26,16,.5);margin-top:10px;display:block}
-
-/* ---------- Formulario ---------- */
-.form{background:var(--papel);border:1px solid var(--linea);border-radius:10px;padding:16px;margin-top:14px;display:grid;gap:13px}
-@media(min-width:700px){.form{grid-template-columns:1fr 1fr}.ancho{grid-column:1/-1}}
-.campo{display:grid;gap:5px}
-.campo label{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:rgba(36,26,16,.62)}
-.campo input,.campo select,.campo textarea{
-  font-family:var(--texto);font-size:15.5px;padding:11px 12px;border:1px solid var(--linea);
-  border-radius:7px;background:#fff;color:var(--tierra);width:100%
+  hoja.getRange(2, 1, hoja.getLastRow() - 1, 2).getValues().forEach(function (f) {
+    var clave = normalizar(f[0]), valor = String(f[1] || '').trim();
+    if (!clave || !valor) return;
+    if (clave === 'punto de recogida')          cfg.puntos.push(valor);
+    else if (clave === 'franja de entrega')     cfg.franjas.push(valor);
+    else if (clave === 'pedido minimo')         cfg.minimo = Number(String(valor).replace(/\D/g, '')) || 0;
+    else if (clave === 'titular')               cfg.titular = valor;
+    else if (clave === 'mensaje de la semana')  cfg.mensaje = valor;
+  });
+  return cfg;
 }
-.campo textarea{resize:vertical;min-height:70px}
-.campo .pista{font-size:12px;color:rgba(36,26,16,.55)}
-.campo.malo input,.campo.malo select{border-color:#A3321E;background:#FFF4F1}
-.error{font-size:12.5px;color:#A3321E;font-weight:700}
 
-/* ---------- Báscula ---------- */
-.bascula{
-  position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--tierra);
-  color:var(--fique);padding:10px 0 calc(10px + env(safe-area-inset-bottom));
-  box-shadow:0 -6px 22px rgba(36,26,16,.28)
+function normalizar(v) {
+  return String(v || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');    // quita tildes
 }
-.bascula .wrap{display:flex;align-items:center;gap:14px}
-.lectura{flex:1;min-width:0}
-.lectura .kg{font-family:var(--dato);font-weight:700;font-size:clamp(19px,5.6vw,26px);color:var(--lcd);line-height:1.05;letter-spacing:.02em}
-.lectura .pesos{font-family:var(--dato);font-size:13px;color:rgba(229,215,184,.72);margin-top:2px}
-.lectura .alerta{font-size:12px;color:#F0B45A;margin-top:2px;font-weight:700}
-.enviar{
-  font-family:var(--display);text-transform:uppercase;font-size:14px;letter-spacing:.05em;
-  background:var(--lcd);color:var(--tierra);border:0;border-radius:8px;padding:14px 18px;cursor:pointer;flex:none
+
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
-.enviar:disabled{background:rgba(229,215,184,.22);color:rgba(229,215,184,.5);cursor:not-allowed}
 
-/* ---------- Confirmación ---------- */
-.listo{background:var(--hoja);color:var(--papel);border-radius:10px;padding:22px;margin-top:16px;display:none}
-.listo.ver{display:block}
-.listo h2{font-family:var(--display);font-size:24px;text-transform:uppercase;line-height:1.05}
-.listo p{margin-top:9px;font-size:15px;color:rgba(250,245,233,.85)}
-.listo .resumen{font-family:var(--dato);font-size:13.5px;background:rgba(0,0,0,.22);padding:12px;border-radius:7px;margin-top:13px;white-space:pre-line}
+/* ================================================================
+   2. LO QUE LA VITRINA MANDA (pedidos)
+   ================================================================ */
 
-.pie{padding:26px 0 34px;font-size:12.5px;color:rgba(36,26,16,.55);text-align:center}
-@media(prefers-reduced-motion:no-preference){
-  .item{transition:border-color .15s,box-shadow .15s}
-  .stepper button{transition:background .12s,color .12s}
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var d = e.parameter;
+    obtenerHoja(HOJA_PEDIDOS, ENC_PEDIDOS).appendRow([
+      new Date(), d.jornada || '', d.nombre || '',
+      "'" + (d.telefono || ''),
+      d.punto || '', d.franja || '',
+      Number(d.kg_total) || 0, Number(d.total) || 0,
+      d.detalle || '', d.notas || '', 'Confirmado', 'No'
+    ]);
+    guardarLineas(d);
+    consolidar();
+    return json({ ok: true });
+  } catch (err) {
+    return json({ ok: false, error: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
 }
-</style>
-</head>
-<body>
 
-<!-- ================================================================
-     CONFIGURACIÓN — es lo único que editas cada semana.
-     Está más abajo, en el bloque de código marcado "CONFIG".
-     ================================================================ -->
+function guardarLineas(d) {
+  var lineas;
+  try { lineas = JSON.parse(d.items || '[]'); } catch (x) { return; }
+  if (!lineas.length) return;
 
-<header class="top">
-  <div class="wrap">
-    <h1 class="marca">Despensa <span>del Campo</span></h1>
-    <p class="bajada">Plátano, yuca y fruta compradas en finca el mismo sábado. Sin plaza, sin intermediario, sin bodega.</p>
-    <dl class="avisos">
-      <div class="aviso"><dt>Pedidos hasta</dt><dd id="cierre">—</dd><dd class="cuenta" id="cuenta"></dd></div>
-      <div class="aviso"><dt>Entrega</dt><dd id="jornada">—</dd></div>
-      <div class="aviso"><dt>Punto de recogida</dt><dd id="punto-cab">—</dd></div>
-    </dl>
-  </div>
-</header>
+  var hoja = obtenerHoja(HOJA_LINEAS, ENC_LINEAS);
+  var ahora = new Date();
+  var filas = lineas.map(function (l) {
+    return [ahora, d.jornada || '', d.nombre || '', l.producto,
+            Number(l.kg), Number(l.precio), Number(l.subtotal)];
+  });
+  hoja.getRange(hoja.getLastRow() + 1, 1, filas.length, ENC_LINEAS.length).setValues(filas);
+}
 
-<main class="wrap">
+/* ================================================================
+   3. LA LISTA DE COMPRA
+   ================================================================ */
 
-  <section class="seccion">
-    <h2 class="rotulo">Lo que hay esta semana</h2>
-    <p class="nota">Los precios son por kilo y ya están fijados para esta semana. Marca las cantidades que quieres; abajo ves el total en tiempo real.</p>
-    <ul class="rejilla" id="rejilla"></ul>
-  </section>
+function consolidar() {
+  var origen = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJA_LINEAS);
+  if (!origen || origen.getLastRow() < 2) return;
 
-  <section class="seccion">
-    <h2 class="rotulo">Tus datos</h2>
-    <p class="nota">Solo necesito cómo te llamo y por dónde te aviso cuando llegue el mercado.</p>
-    <div class="form">
-      <div class="campo"><label for="nombre">Nombre y apellido</label><input id="nombre" name="nombre" type="text" autocomplete="name" placeholder="Ingrid Rodríguez"></div>
-      <div class="campo"><label for="tel">WhatsApp</label><input id="tel" name="tel" type="tel" inputmode="numeric" autocomplete="tel" placeholder="300 000 0000"></div>
-      <div class="campo"><label for="punto">Dónde recoges</label><select id="punto"></select></div>
-      <div class="campo"><label for="franja">A qué hora pasas</label><select id="franja"></select></div>
-      <div class="campo ancho"><label for="notas">Algo que deba saber</label><textarea id="notas" placeholder="Ej: el plátano bien verde, o llego después de las 5"></textarea><span class="pista">Opcional.</span></div>
-      <div class="ancho" id="zona-error"></div>
-    </div>
-  </section>
+  var jornada = jornadaVigente();
+  var suma = {}, clientes = {};
 
-  <section class="listo" id="listo" aria-live="polite">
-    <h2>Pedido recibido</h2>
-    <p id="listo-texto"></p>
-    <div class="resumen" id="listo-resumen"></div>
-  </section>
+  origen.getRange(2, 1, origen.getLastRow() - 1, ENC_LINEAS.length).getValues().forEach(function (f) {
+    if (String(f[1]) !== jornada) return;
+    var p = f[3];
+    if (!suma[p]) { suma[p] = { kg: 0, plata: 0, precio: f[5] }; clientes[p] = {}; }
+    suma[p].kg += Number(f[4]);
+    suma[p].plata += Number(f[6]);
+    clientes[p][f[2]] = true;
+  });
 
-  <p class="pie">Despensa del Campo · Santander · Producto de finca, no de plaza.</p>
-</main>
+  var hoja = obtenerHoja(HOJA_CONSOLIDADO,
+    ['Producto', 'Kg a comprar', 'Clientes', 'Precio venta $/kg', 'Venta esperada $',
+     'Costo finca real $/kg', 'Costo total $']);
+  if (hoja.getLastRow() > 1) hoja.getRange(2, 1, hoja.getLastRow() - 1, 7).clearContent();
 
-<div class="bascula">
-  <div class="wrap">
-    <div class="lectura">
-      <div class="kg" id="kg-total">0,0 kg</div>
-      <div class="pesos" id="plata-total">$0</div>
-      <div class="alerta" id="alerta"></div>
-    </div>
-    <button class="enviar" id="enviar" disabled>Enviar pedido</button>
-  </div>
-</div>
+  var filas = Object.keys(suma)
+    .sort(function (a, b) { return suma[b].kg - suma[a].kg; })
+    .map(function (p, i) {
+      var r = i + 2;
+      return [p, suma[p].kg, Object.keys(clientes[p]).length, suma[p].precio, suma[p].plata,
+              '', '=IF(F' + r + '="","",B' + r + '*F' + r + ')'];
+    });
+  if (!filas.length) return;
 
-<script>
-/* ============================================================
-   CONFIG — lo único que tocas.
-   ============================================================ */
+  hoja.getRange(2, 1, filas.length, 7).setValues(filas);
+  var t = filas.length + 2;
+  hoja.getRange(t, 1).setValue('TOTAL JORNADA ' + jornada);
+  hoja.getRange(t, 2).setFormula('=SUM(B2:B' + (t - 1) + ')');
+  hoja.getRange(t, 5).setFormula('=SUM(E2:E' + (t - 1) + ')');
+  hoja.getRange(t, 7).setFormula('=SUM(G2:G' + (t - 1) + ')');
+  hoja.getRange(t, 1, 1, 7).setFontWeight('bold').setBackground('#E5D7B8');
+  hoja.autoResizeColumns(1, 7);
+}
 
-// Pega aquí la URL que te da Google al implementar el Apps Script.
-// Mientras esté vacía, el pedido se manda por WhatsApp (plan B).
-const ENDPOINT = "";
-
-// Tu WhatsApp, con indicativo, solo números. Se usa como plan B.
-const WHATSAPP = "573000000000";
-
-// Pedido mínimo en pesos. Pon 0 si no quieres mínimo.
-const MINIMO = 20000;
-
-// Puntos y horarios de recogida.
-const PUNTOS = [
-  "Parqueadero Porto Vento — Girón",
-  "Parque principal de Floridablanca"
-];
-const FRANJAS = [
-  "Sábado 8:00 a 11:00 a.m.",
-  "Sábado 3:00 a 6:00 p.m.",
-  "Domingo 8:00 a 11:00 a.m."
-];
-
-// Catálogo. Para poner foto: "foto":"fotos/platano.jpg" (sube la imagen junto al HTML).
-// Para sacar un producto esa semana: "hay": false.
-const PRODUCTOS = [
-  {nombre:"Plátano hartón", precio:1900, plaza:2200, paso:1,   nota:"Verde o pintón, como lo pidas", foto:"", hay:true},
-  {nombre:"Yuca",           precio:1750, plaza:2000, paso:1,   nota:"Recién sacada, para cocinar el mismo día", foto:"", hay:true},
-  {nombre:"Ahuyama",        precio:1800, plaza:2000, paso:1,   nota:"Aguanta toda la semana", foto:"", hay:true},
-  {nombre:"Naranja",        precio:1600, plaza:1800, paso:2,   nota:"De jugo, bien pesada", foto:"", hay:true},
-  {nombre:"Limón",          precio:2350, plaza:2400, paso:0.5, nota:"Tahití", foto:"", hay:true},
-  {nombre:"Piña",           precio:2100, plaza:2300, paso:1,   nota:"Perolera, en su punto", foto:"", hay:true},
-  {nombre:"Cebolla",        precio:2650, plaza:2800, paso:0.5, nota:"Larga duración", foto:"", hay:true},
-  {nombre:"Tomate",         precio:3500, plaza:3600, paso:0.5, nota:"Chonto", foto:"", hay:true},
-  {nombre:"Mango",          precio:2950, plaza:3200, paso:1,   nota:"De temporada", foto:"", hay:true},
-  {nombre:"Guayaba",        precio:2450, plaza:2600, paso:0.5, nota:"Muy delicada: pide poco", foto:"", hay:true},
-  {nombre:"Aguacate",       precio:4500, plaza:4500, paso:0.5, nota:"Papelillo, para la semana", foto:"", hay:true},
-  {nombre:"Panela",         precio:4200, plaza:4600, paso:1,   nota:"De trapiche, redonda", foto:"", hay:true}
-];
-
-/* ============================================================
-   De aquí para abajo no necesitas tocar nada.
-   ============================================================ */
-
-const pesos = n => "$" + Math.round(n).toLocaleString("es-CO");
-const kilos = n => n.toLocaleString("es-CO",{minimumFractionDigits:1,maximumFractionDigits:1}) + " kg";
-const carrito = {};
-
-/* --- Fechas: se calculan solas, no las editas nunca --- */
-function calendario(){
-  const hoy = new Date();
-  const cierre = new Date(hoy);
-  let falta = (4 - hoy.getDay() + 7) % 7;              // 4 = jueves
-  cierre.setDate(hoy.getDate() + falta);
-  cierre.setHours(20,0,0,0);
+function jornadaVigente() {
+  var hoy = new Date(), cierre = new Date();
+  cierre.setDate(hoy.getDate() + ((4 - hoy.getDay() + 7) % 7));
+  cierre.setHours(20, 0, 0, 0);
   if (cierre <= hoy) cierre.setDate(cierre.getDate() + 7);
-  const sab = new Date(cierre); sab.setDate(cierre.getDate() + 2); sab.setHours(8,0,0,0);
-  const dom = new Date(sab);    dom.setDate(sab.getDate() + 1);
-  return {cierre, sab, dom};
-}
-const F = calendario();
-const dia = d => d.toLocaleDateString("es-CO",{weekday:"long",day:"numeric",month:"long"});
-
-document.getElementById("cierre").textContent = dia(F.cierre) + ", 8 p.m.";
-document.getElementById("jornada").textContent = "Sáb " + F.sab.getDate() + " y dom " + F.dom.getDate();
-document.getElementById("punto-cab").textContent = PUNTOS[0];
-
-(function cuenta(){
-  const ms = F.cierre - new Date();
-  const d = Math.floor(ms/864e5), h = Math.floor(ms/36e5) % 24;
-  document.getElementById("cuenta").textContent =
-    ms <= 0 ? "cerrado" : (d > 0 ? "faltan " + d + " día" + (d>1?"s":"") : "faltan " + h + " horas");
-})();
-
-/* --- Catálogo --- */
-const rejilla = document.getElementById("rejilla");
-PRODUCTOS.forEach((p,i) => {
-  const ahorro = p.plaza ? 1 - p.precio / p.plaza : 0;
-  const li = document.createElement("li");
-  li.className = "item" + (p.hay ? "" : " agotado");
-  li.id = "item-" + i;
-  li.innerHTML = `
-    <div class="foto${p.foto ? " con-foto" : ""}">${p.foto
-      ? `<img src="${p.foto}" alt="${p.nombre}" loading="lazy">`
-      : `<span class="inicial">${p.nombre[0]}</span>`}</div>
-    <div>
-      <div class="nombre">${p.nombre}</div>
-      <div class="detalle">${p.nota}</div>
-      <div class="precios">
-        <span class="precio">${pesos(p.precio)}<span class="unidad"> /kg</span></span>
-        ${p.plaza ? `<span class="plaza">${pesos(p.plaza)}</span>` : ""}
-        ${ahorro >= 0.08 ? `<span class="ahorro">ahorras ${Math.round(ahorro*100)}%</span>` : ""}
-      </div>
-      ${p.hay ? `
-      <div class="stepper">
-        <button type="button" data-i="${i}" data-d="-1" aria-label="Quitar ${p.nombre}">−</button>
-        <input type="number" id="q-${i}" value="0" min="0" step="${p.paso}" inputmode="decimal" aria-label="Kilos de ${p.nombre}">
-        <span class="med">kg</span>
-        <button type="button" data-i="${i}" data-d="1" aria-label="Agregar ${p.nombre}">+</button>
-        <span class="subtotal" id="s-${i}"></span>
-      </div>` : `<span class="agotado-tag">No hay esta semana</span>`}
-    </div>`;
-  rejilla.appendChild(li);
-});
-
-rejilla.addEventListener("click", e => {
-  const b = e.target.closest("button[data-i]");
-  if (!b) return;
-  const i = +b.dataset.i, p = PRODUCTOS[i], inp = document.getElementById("q-" + i);
-  inp.value = Math.max(0, Math.round(((+inp.value || 0) + (+b.dataset.d) * p.paso) * 10) / 10);
-  fijar(i);
-});
-rejilla.addEventListener("input", e => {
-  if (e.target.matches("input[type=number]")) fijar(+e.target.id.split("-")[1]);
-});
-
-function fijar(i){
-  const q = Math.max(0, +document.getElementById("q-" + i).value || 0);
-  carrito[i] = q;
-  document.getElementById("s-" + i).textContent = q ? pesos(q * PRODUCTOS[i].precio) : "";
-  document.getElementById("item-" + i).classList.toggle("activo", q > 0);
-  totalizar();
+  var sab = new Date(cierre);
+  sab.setDate(cierre.getDate() + 2);
+  return Utilities.formatDate(sab, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
-function totales(){
-  let kg = 0, plata = 0;
-  for (const i in carrito){ kg += carrito[i]; plata += carrito[i] * PRODUCTOS[i].precio; }
-  return {kg, plata};
-}
-function totalizar(){
-  const {kg, plata} = totales();
-  document.getElementById("kg-total").textContent = kilos(kg);
-  document.getElementById("plata-total").textContent = pesos(plata);
-  const corto = MINIMO > 0 && plata > 0 && plata < MINIMO;
-  document.getElementById("alerta").textContent = corto ? "Pedido mínimo " + pesos(MINIMO) : "";
-  document.getElementById("enviar").disabled = plata <= 0 || corto;
-}
+/* ================================================================
+   4. ARMADO INICIAL
+   ================================================================ */
 
-/* --- Selects --- */
-const sel = (id, arr) => {
-  const s = document.getElementById(id);
-  arr.forEach(v => { const o = document.createElement("option"); o.value = o.textContent = v; s.appendChild(o); });
-};
-sel("punto", PUNTOS); sel("franja", FRANJAS);
-document.getElementById("punto").addEventListener("change", e => {
-  document.getElementById("punto-cab").textContent = e.target.value;
-});
+function crearHojasBase() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-/* --- Enviar --- */
-document.getElementById("enviar").addEventListener("click", enviar);
+  if (!ss.getSheetByName(HOJA_CATALOGO)) {
+    var cat = obtenerHoja(HOJA_CATALOGO, ENC_CATALOGO);
+    cat.getRange(2, 1, 4, ENC_CATALOGO.length).setValues([
+      [1, 'Plátano hartón', 1900, 2200, 'Auto', 1,   'Verde o pintón, como lo pidas',    'fotos/platano.jpg', 'Si'],
+      [2, 'Yuca',           1750, 2000, 'Auto', 1,   'Recién sacada, para el mismo día', 'fotos/yuca.jpg',    'Si'],
+      [3, 'Papa pastusa',   2100, 2600, 'Si',   1,   'Bulto abierto, escogida',          '',                  'Si'],
+      [4, 'Limón Tahití',   2350, 2400, 'No',   0.5, 'Jugoso, de cáscara delgada',       '',                  'Si']
+    ]);
 
-function enviar(){
-  const nombre = document.getElementById("nombre").value.trim();
-  const tel    = document.getElementById("tel").value.replace(/\D/g,"");
-  const zona   = document.getElementById("zona-error");
-  zona.innerHTML = ""; 
-  document.querySelectorAll(".campo").forEach(c => c.classList.remove("malo"));
+    var reglaSiNo = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Si', 'No'], true).setAllowInvalid(false).build();
+    var reglaAhorro = SpreadsheetApp.newDataValidation()
+      .requireValueInList(['Auto', 'Si', 'No'], true).setAllowInvalid(false).build();
 
-  const fallas = [];
-  if (nombre.length < 3){ fallas.push("Escribe tu nombre."); document.getElementById("nombre").closest(".campo").classList.add("malo"); }
-  if (tel.length < 10)  { fallas.push("El WhatsApp debe tener 10 dígitos."); document.getElementById("tel").closest(".campo").classList.add("malo"); }
-  if (fallas.length){
-    zona.innerHTML = `<p class="error">${fallas.join(" ")}</p>`;
-    document.getElementById(nombre.length < 3 ? "nombre" : "tel").focus();
-    return;
+    cat.getRange(2, 9, 200).setDataValidation(reglaSiNo);
+    cat.getRange(2, 5, 200).setDataValidation(reglaAhorro);
+    cat.getRange(2, 3, 200, 2).setNumberFormat('$#,##0');
+    cat.setColumnWidth(2, 170); cat.setColumnWidth(7, 260); cat.setColumnWidth(8, 170);
+
+    cat.getRange(1, 11).setValue('CÓMO USAR ESTA HOJA').setFontWeight('bold');
+    cat.getRange(2, 11).setValue(
+      'Orden: en qué posición aparece en la vitrina (1 primero).\n' +
+      'Precio venta: el que ve el cliente, por kilo.\n' +
+      'Precio de referencia: lo que cuesta en la plaza. Alimenta el tachado y el "ahorras X%".\n' +
+      'Mostrar ahorro: Auto = solo si supera el 8%. Si = siempre. No = nunca.\n' +
+      'Paso: de a cuánto suma el botón +. Usa 0,5 en lo caro y 1 en lo pesado.\n' +
+      'Archivo de foto: la ruta dentro de tu repositorio, ej. fotos/platano.jpg. Vacío = se muestra la inicial.\n' +
+      'Disponible: pon No y el producto sale de la vitrina sin borrar la fila.\n\n' +
+      'Los cambios se ven apenas el cliente recargue. No hay que volver a publicar nada.'
+    ).setWrap(true);
+    cat.setColumnWidth(11, 460);
   }
 
-  const lineas = Object.keys(carrito).filter(i => carrito[i] > 0)
-    .map(i => ({producto: PRODUCTOS[i].nombre, kg: carrito[i], precio: PRODUCTOS[i].precio, subtotal: carrito[i]*PRODUCTOS[i].precio}));
-  const {kg, plata} = totales();
+  if (!ss.getSheetByName(HOJA_CONFIG)) {
+    var cfg = obtenerHoja(HOJA_CONFIG, ['Parámetro', 'Valor']);
+    cfg.getRange(2, 1, 7, 2).setValues([
+      ['Titular',              'Despensa del Campo'],
+      ['Mensaje de la semana', 'Plátano, yuca y fruta compradas en finca el mismo sábado.'],
+      ['Punto de recogida',    'Parqueadero Porto Vento — Girón'],
+      ['Punto de recogida',    'Parque principal de Floridablanca'],
+      ['Franja de entrega',    'Sábado 8:00 a 11:00 a.m.'],
+      ['Franja de entrega',    'Sábado 3:00 a 6:00 p.m.'],
+      ['Pedido mínimo',        20000]
+    ]);
+    cfg.setColumnWidth(1, 200); cfg.setColumnWidth(2, 380);
+    cfg.getRange(1, 4).setValue(
+      'Puedes repetir "Punto de recogida" y "Franja de entrega" en varias filas: todas aparecen en la vitrina.'
+    ).setWrap(true);
+    cfg.setColumnWidth(4, 380);
+  }
 
-  const pedido = {
-    fecha: new Date().toISOString(),
-    jornada: F.sab.toISOString().slice(0,10),
-    nombre, telefono: tel,
-    punto: document.getElementById("punto").value,
-    franja: document.getElementById("franja").value,
-    notas: document.getElementById("notas").value.trim(),
-    kg_total: kg, total: plata,
-    detalle: lineas.map(l => l.producto + ":" + l.kg).join(" | "),
-    items: JSON.stringify(lineas)
-  };
-
-  const btn = document.getElementById("enviar");
-  btn.disabled = true; btn.textContent = "Enviando…";
-
-  if (!ENDPOINT){ planB(pedido, lineas); return; }
-
-  fetch(ENDPOINT, {method:"POST", body:new URLSearchParams(pedido)})
-    .then(r => { if(!r.ok) throw new Error(); confirmar(pedido, lineas); })
-    .catch(() => {
-      btn.disabled = false; btn.textContent = "Enviar pedido";
-      zona.innerHTML = `<p class="error">No se pudo enviar. Revisa tu conexión y vuelve a intentar, o escríbeme por WhatsApp.</p>`;
-    });
+  obtenerHoja(HOJA_PEDIDOS, ENC_PEDIDOS);
+  obtenerHoja(HOJA_LINEAS, ENC_LINEAS);
+  SpreadsheetApp.getUi().alert('Listo. Ya puedes editar las hojas Catalogo y Config.');
 }
 
-function planB(pedido, lineas){
-  const txt = "*Pedido Despensa del Campo*\n" + pedido.nombre + " · " + pedido.telefono + "\n\n"
-    + lineas.map(l => "• " + l.producto + " — " + l.kg + " kg").join("\n")
-    + "\n\nTotal: " + pesos(pedido.total) + "\nRecojo en: " + pedido.punto + "\n" + pedido.franja
-    + (pedido.notas ? "\nNota: " + pedido.notas : "");
-  window.open("https://wa.me/" + WHATSAPP + "?text=" + encodeURIComponent(txt), "_blank");
-  confirmar(pedido, lineas);
+function obtenerHoja(nombre, encabezados) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hoja = ss.getSheetByName(nombre);
+  if (!hoja) {
+    hoja = ss.insertSheet(nombre);
+    hoja.appendRow(encabezados);
+    hoja.getRange(1, 1, 1, encabezados.length)
+        .setFontWeight('bold').setBackground('#17492C').setFontColor('#FAF5E9');
+    hoja.setFrozenRows(1);
+  }
+  return hoja;
 }
 
-function confirmar(pedido, lineas){
-  document.getElementById("listo-texto").textContent =
-    pedido.nombre.split(" ")[0] + ", quedó anotado. Te confirmo por WhatsApp el jueves en la noche cuando cierre el pedido, y te aviso apenas llegue del campo.";
-  document.getElementById("listo-resumen").textContent =
-    lineas.map(l => l.kg + " kg · " + l.producto).join("\n")
-    + "\n────────────\nTotal " + pesos(pedido.total)
-    + "\n" + pedido.punto + "\n" + pedido.franja;
-  document.getElementById("listo").classList.add("ver");
-  document.getElementById("listo").scrollIntoView({behavior:"smooth", block:"center"});
-  const btn = document.getElementById("enviar");
-  btn.textContent = "Pedido enviado"; btn.disabled = true;
+/* ================================================================
+   5. MENÚ
+   ================================================================ */
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Despensa')
+    .addItem('Crear hojas base', 'crearHojasBase')
+    .addSeparator()
+    .addItem('Actualizar lista de compra', 'consolidar')
+    .addItem('Ver resumen de la jornada', 'resumen')
+    .addItem('Revisar el catálogo', 'revisarCatalogo')
+    .addToUi();
 }
 
-totalizar();
-</script>
-</body>
-</html>
+function resumen() {
+  consolidar();
+  var hoja = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HOJA_CONSOLIDADO);
+  if (!hoja || hoja.getLastRow() < 2) {
+    SpreadsheetApp.getUi().alert('Todavía no hay pedidos para esta jornada.');
+    return;
+  }
+  var u = hoja.getLastRow();
+  SpreadsheetApp.getUi().alert(
+    'Jornada ' + jornadaVigente() + '\n\n' +
+    'Kilos a comprar: ' + hoja.getRange(u, 2).getValue() + ' kg\n' +
+    'Venta esperada: $' + Number(hoja.getRange(u, 5).getValue()).toLocaleString('es-CO') + '\n\n' +
+    'Si los kilos quedan por debajo de tu punto de equilibrio, el flete se come el margen.'
+  );
+}
+
+/** Avisa de errores del catálogo antes de que los vea un cliente. */
+function revisarCatalogo() {
+  var lista = leerCatalogo(), avisos = [];
+  if (!lista.length) avisos.push('· El catálogo está vacío o ningún producto tiene precio.');
+
+  lista.forEach(function (p) {
+    if (!p.hay) return;
+    if (p.plaza && p.precio >= p.plaza)
+      avisos.push('· ' + p.nombre + ': tu precio no es menor al de referencia.');
+    if (p.ahorro === 'si' && p.plaza && (1 - p.precio / p.plaza) < 0.05)
+      avisos.push('· ' + p.nombre + ': estás forzando "ahorras" con menos del 5%. El cliente no lo siente.');
+    if (!p.nota)
+      avisos.push('· ' + p.nombre + ': sin descripción. Una línea vende más que el nombre solo.');
+  });
+
+  var activos = lista.filter(function (p) { return p.hay; }).length;
+  SpreadsheetApp.getUi().alert(
+    'Productos publicados: ' + activos + ' de ' + lista.length + '\n\n' +
+    (avisos.length ? avisos.join('\n') : 'Sin observaciones. El catálogo está listo.')
+  );
+}
