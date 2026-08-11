@@ -85,15 +85,26 @@ body{
 .agotado-tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(36,26,16,.5);margin-top:10px;display:block}
 
 /* ---------- Formulario ---------- */
-.form{background:var(--papel);border:1px solid var(--linea);border-radius:10px;padding:16px;margin-top:14px;display:grid;gap:13px}
-@media(min-width:700px){.form{grid-template-columns:1fr 1fr}.ancho{grid-column:1/-1}}
-.campo{display:grid;gap:5px}
+.form{background:var(--papel);border:1px solid var(--linea);border-radius:10px;padding:16px;margin-top:14px;display:grid;gap:14px}
+@media(min-width:700px){.form{grid-template-columns:1fr 1fr;align-items:start}.ancho{grid-column:1/-1}}
+.campo{display:grid;gap:5px;grid-template-rows:auto 46px auto;align-content:start}
+.campo.alto{grid-template-rows:auto auto auto}
 .campo label{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:rgba(36,26,16,.62)}
-.campo input,.campo select,.campo textarea{
-  font-family:var(--texto);font-size:15.5px;padding:11px 12px;border:1px solid var(--linea);
-  border-radius:7px;background:#fff;color:var(--tierra);width:100%
+.campo input,.campo select{
+  font-family:var(--texto);font-size:15.5px;line-height:1.2;height:46px;padding:0 12px;
+  border:1px solid var(--linea);border-radius:7px;background:#fff;color:var(--tierra);
+  width:100%;appearance:none;-webkit-appearance:none
 }
-.campo textarea{resize:vertical;min-height:70px}
+.campo select{
+  padding-right:34px;cursor:pointer;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%23241A10' d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;background-size:11px
+}
+.campo textarea{
+  font-family:var(--texto);font-size:15.5px;padding:11px 12px;border:1px solid var(--linea);
+  border-radius:7px;background:#fff;color:var(--tierra);width:100%;resize:vertical;min-height:76px
+}
+.campo .pista{min-height:0}
 .campo .pista{font-size:12px;color:rgba(36,26,16,.55)}
 .campo.malo input,.campo.malo select{border-color:#A3321E;background:#FFF4F1}
 .error{font-size:12.5px;color:#A3321E;font-weight:700}
@@ -152,7 +163,7 @@ body{
 
   <section class="seccion">
     <h2 class="rotulo">Lo que hay esta semana</h2>
-    <p class="nota">Los precios son por kilo y ya están fijados para esta semana. Marca las cantidades que quieres; abajo ves el total en tiempo real.</p>
+    <p class="nota">Los precios son por kilo y ya están fijados para esta semana. Marca las cantidades que quieres; abajo ves el total en tiempo real. <strong id="aviso-min"></strong></p>
     <ul class="rejilla" id="rejilla"></ul>
   </section>
 
@@ -167,7 +178,7 @@ body{
       <div class="campo ancho"><label for="direccion">Dirección exacta</label><input id="direccion" type="text" autocomplete="street-address" placeholder="Calle 30 #12-45, torre 5 apto 504"><span class="pista">Incluye torre, apartamento o interior si aplica.</span></div>
       <div class="campo"><label for="referencia">Punto de referencia</label><input id="referencia" type="text" placeholder="Portería azul, frente al parque"><span class="pista">Opcional, pero evita llamadas.</span></div>
       <div class="campo"><label for="franja">Franja de entrega</label><select id="franja"></select></div>
-      <div class="campo ancho"><label for="notas">Algo que deba saber</label><textarea id="notas" placeholder="Ej: el plátano bien verde, o llego después de las 5"></textarea><span class="pista">Opcional. Ej: llamar al llegar, no timbrar.</span></div>
+      <div class="campo alto ancho"><label for="notas">Algo que deba saber</label><textarea id="notas" placeholder="Ej: el plátano bien verde, o llego después de las 5"></textarea><span class="pista">Opcional. Ej: llamar al llegar, no timbrar.</span></div>
       <div class="ancho" id="zona-error"></div>
     </div>
   </section>
@@ -200,13 +211,14 @@ body{
    ============================================================ */
 
 const ENDPOINT = "";                     // URL del Apps Script, termina en /exec
-const DOMICILIO = 0;                     // costo del domicilio. Deja 0 si va incluido en el precio.
+const MINIMO_LOCAL = 15000;              // pedido mínimo en pesos. Pon 0 para quitarlo.
+const DOMICILIO    = 0;                  // costo del domicilio. Deja 0 si va incluido en el precio.
 const WHATSAPP  = "573118696916";         // tu número, solo dígitos. Plan B si falla el envío.
 
 /* Respaldo: se usa solo si la hoja no responde, para que la vitrina
    nunca aparezca vacía frente a un cliente. */
 const RESPALDO = {
-  minimo: 20000,
+  minimo: MINIMO_LOCAL,
   municipios: ["Floridablanca", "Girón", "Bucaramanga", "Piedecuesta"],
   franjas: ["Sábado en la mañana (8 a 12)", "Sábado en la tarde (2 a 6)", "Domingo en la mañana (8 a 12)"],
   productos: [
@@ -365,8 +377,16 @@ function totalizar(){
   document.getElementById("plata-total").textContent =
     pesos(plata + (plata > 0 ? DOMICILIO : 0)) + (DOMICILIO > 0 && plata > 0 ? "  (incluye domicilio)" : "");
   const corto = MINIMO > 0 && plata > 0 && plata < MINIMO;
-  document.getElementById("alerta").textContent = corto ? "Pedido mínimo " + pesos(MINIMO) : "";
-  document.getElementById("enviar").disabled = plata <= 0 || corto;
+  const falta = corto ? MINIMO - plata : 0;
+  document.getElementById("alerta").textContent =
+    corto ? "Te faltan " + pesos(falta) + " para el pedido mínimo" : "";
+  const btn = document.getElementById("enviar");
+  btn.disabled = plata <= 0 || corto;
+  btn.textContent = plata <= 0 ? "Elige productos"
+                  : corto ? "Faltan " + pesos(falta)
+                  : "Enviar pedido";
+  const avisoMin = document.getElementById("aviso-min");
+  if (avisoMin) avisoMin.textContent = MINIMO > 0 ? "Pedido mínimo de " + pesos(MINIMO) + "." : "";
 }
 
 /* --- Selects --- */
