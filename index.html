@@ -126,6 +126,33 @@ body{
 }
 .enviar:disabled{background:rgba(229,215,184,.22);color:rgba(229,215,184,.5);cursor:not-allowed}
 
+/* ---------- Enviando ---------- */
+.velo{
+  position:fixed;inset:0;z-index:60;background:rgba(36,26,16,.82);
+  display:none;place-items:center;padding:24px;backdrop-filter:blur(2px)
+}
+.velo.ver{display:grid}
+.caja{
+  background:var(--papel);border-radius:12px;padding:30px 26px;max-width:330px;width:100%;
+  text-align:center;box-shadow:0 18px 44px rgba(0,0,0,.32)
+}
+.canasto{width:66px;height:66px;margin:0 auto 16px;position:relative}
+.canasto svg{width:100%;height:100%;display:block}
+.aro{transform-origin:33px 33px;animation:gira 1.05s linear infinite}
+@keyframes gira{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.aro{animation:none;opacity:.55}}
+.caja h3{font-family:var(--display);text-transform:uppercase;font-size:16px;letter-spacing:.03em;color:var(--hoja)}
+.caja p{font-size:13.5px;color:rgba(36,26,16,.62);margin-top:7px}
+.caja .fallo{color:#A3321E;font-weight:700}
+.reintentar{
+  font-family:var(--texto);font-weight:700;font-size:14px;margin-top:15px;
+  background:var(--hoja);color:var(--papel);border:0;border-radius:7px;padding:11px 18px;cursor:pointer
+}
+.cerrar{
+  display:block;margin:9px auto 0;background:none;border:0;font-family:var(--texto);
+  font-size:12.5px;color:rgba(36,26,16,.55);text-decoration:underline;cursor:pointer
+}
+
 /* ---------- Confirmación ---------- */
 .listo{background:var(--hoja);color:var(--papel);border-radius:10px;padding:22px;margin-top:16px;display:none}
 .listo.ver{display:block}
@@ -192,6 +219,21 @@ body{
   <p class="pie">Despensa del Campo · Santander · Producto de finca, no de plaza.</p>
 </main>
 
+<div class="velo" id="velo" role="status" aria-live="assertive">
+  <div class="caja">
+    <div class="canasto" id="icono">
+      <svg viewBox="0 0 66 66" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <circle cx="33" cy="33" r="25" fill="none" stroke="#E5D7B8" stroke-width="5"/>
+        <circle class="aro" cx="33" cy="33" r="25" fill="none" stroke="#17492C" stroke-width="5"
+                stroke-linecap="round" stroke-dasharray="40 118"/>
+      </svg>
+    </div>
+    <h3 id="velo-titulo">Enviando tu pedido</h3>
+    <p id="velo-texto">Anotando los kilos…</p>
+    <div id="velo-acciones"></div>
+  </div>
+</div>
+
 <div class="bascula">
   <div class="wrap">
     <div class="lectura">
@@ -213,7 +255,6 @@ body{
 const ENDPOINT = "";                     // URL del Apps Script, termina en /exec
 const MINIMO_LOCAL = 15000;              // pedido mínimo en pesos. Pon 0 para quitarlo.
 const DOMICILIO    = 0;                  // costo del domicilio. Deja 0 si va incluido en el precio.
-const WHATSAPP  = "573118696916";         // tu número, solo dígitos. Plan B si falla el envío.
 
 /* Respaldo: se usa solo si la hoja no responde, para que la vitrina
    nunca aparezca vacía frente a un cliente. */
@@ -440,38 +481,54 @@ function enviar(){
     items: JSON.stringify(lineas)
   };
 
-  const btn = document.getElementById("enviar");
-  btn.disabled = true; btn.textContent = "Enviando…";
-
-  if (!ENDPOINT){ planB(pedido, lineas); return; }
-
-  // Apps Script no devuelve cabeceras CORS, así que la respuesta llega "opaca":
-  // el pedido se guarda bien pero el navegador no puede leer el resultado.
-  // Por eso se envía en modo no-cors y se confirma al terminar.
-  fetch(ENDPOINT, {method:"POST", mode:"no-cors", body:new URLSearchParams(pedido)})
-    .then(() => confirmar(pedido, lineas))
-    .catch(() => {
-      zona.innerHTML = `<p class="error">Se cayó la conexión. Te paso a WhatsApp para no perder el pedido.</p>`;
-      planB(pedido, lineas);
-    });
+  mandar(pedido, lineas);
 }
 
-function planB(pedido, lineas){
-  const txt =
-      "*Pedido para el " + SABADO_TXT + "*\n"
-    + pedido.nombre + " · " + pedido.telefono + "\n\n"
-    + lineas.map(l => "• " + l.producto + " — " + l.kg + " kg").join("\n") + "\n\n"
-    + (DOMICILIO > 0 ? "Productos: " + pesos(pedido.total - DOMICILIO) + "\nDomicilio: " + pesos(DOMICILIO) + "\n" : "")
-    + "*Total: " + pesos(pedido.total) + "*\n\n"
-    + "*Entrega a domicilio*\n"
-    + pedido.municipio + " — " + pedido.barrio + "\n"
-    + pedido.direccion + "\n"
-    + (pedido.referencia ? "Ref: " + pedido.referencia + "\n" : "")
-    + pedido.franja
-    + (pedido.notas ? "\nNota: " + pedido.notas : "");
-  window.open("https://wa.me/" + WHATSAPP + "?text=" + encodeURIComponent(txt), "_blank");
-  confirmar(pedido, lineas);
+/* --- Envío con estado visible --- */
+function mandar(pedido, lineas){
+  document.getElementById("enviar").disabled = true;
+  velo("Enviando tu pedido", "Anotando los kilos…", true);
+
+  if (!ENDPOINT){
+    setTimeout(() => velo("Falta configurar la conexión",
+      "La vitrina todavía no está enlazada con la hoja de pedidos.", false, pedido, lineas), 700);
+    return;
+  }
+
+  // Apps Script no devuelve cabeceras CORS: la respuesta llega "opaca".
+  // El pedido se guarda igual, por eso se envía en modo no-cors.
+  const envio  = fetch(ENDPOINT, {method:"POST", mode:"no-cors", body:new URLSearchParams(pedido)});
+  const minimo = new Promise(r => setTimeout(r, 900));   // que el mensaje alcance a leerse
+
+  Promise.all([envio, minimo])
+    .then(() => { cerrarVelo(); confirmar(pedido, lineas); })
+    .catch(() => velo("No se pudo enviar",
+      "Revisa tu conexión. Tu pedido no se ha perdido: sigue aquí tal como lo armaste.",
+      false, pedido, lineas));
 }
+
+function velo(titulo, texto, cargando, pedido, lineas){
+  document.getElementById("velo-titulo").textContent = titulo;
+  const p = document.getElementById("velo-texto");
+  p.textContent = texto;
+  p.className = cargando ? "" : "fallo";
+  document.getElementById("icono").style.display = cargando ? "block" : "none";
+
+  const acc = document.getElementById("velo-acciones");
+  acc.innerHTML = "";
+  if (!cargando){
+    const r = document.createElement("button");
+    r.className = "reintentar"; r.textContent = "Reintentar";
+    r.onclick = () => mandar(pedido, lineas);
+    const c = document.createElement("button");
+    c.className = "cerrar"; c.textContent = "Volver al pedido";
+    c.onclick = () => { cerrarVelo(); document.getElementById("enviar").disabled = false; };
+    acc.append(r, c);
+  }
+  document.getElementById("velo").classList.add("ver");
+}
+
+function cerrarVelo(){ document.getElementById("velo").classList.remove("ver"); }
 
 function confirmar(pedido, lineas){
   document.getElementById("listo-texto").textContent =
